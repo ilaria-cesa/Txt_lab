@@ -1,0 +1,6 @@
+# Tested with Python 3.13 (works on >= 3.9)
+requests>=2.31,<3
+tqdm>=4.66,<5
+pandas>=2.0
+matplotlib>=3.7
+ipykernel>=6.29

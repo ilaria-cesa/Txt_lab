@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+# downloaded data and caches (large, reproducible with the scripts)
+data/*
+!data/sample/
+!data/.gitkeep
+*_cache/
+arxiv_cache/
