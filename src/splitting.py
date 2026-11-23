@@ -4,7 +4,7 @@
   The cut is on whole calendar years, so no paper of the test period can appear in training
   and seasonality (conference deadlines) does not distort a split made in the middle of a year.
 * `cap_general`: rebalancing that touches the TRAIN set only. It reduces the papers whose
-  only technique label is `General ML/AI`, sampling them uniformly within each month so that
+  technique label is `General ML/AI`, sampling them uniformly within each month so that
   the temporal composition of the training set is preserved. Validation and test keep their
   natural distribution, otherwise the metrics would describe a world that does not exist.
 """
@@ -34,8 +34,8 @@ def split_by_year(df: pd.DataFrame, train_end: int = 2024, val_year: int = 2025,
 
 
 def general_only_mask(df: pd.DataFrame) -> pd.Series:
-    """Papers whose only technique label is `General ML/AI`."""
-    return df["technique_labels"] == lm.GENERAL
+    """Papers whose (single) technique label is `General ML/AI`."""
+    return df["technique_label"] == lm.GENERAL
 
 
 def cap_general(train: pd.DataFrame, cap: int, seed: int = 42) -> pd.DataFrame:
@@ -54,12 +54,17 @@ def cap_general(train: pd.DataFrame, cap: int, seed: int = 42) -> pd.DataFrame:
 
 
 def split_summary(splits: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Size and % of papers per technique label in every split (one row per split)."""
+    """Size and % of papers per technique label in every split (one row per split).
+
+    Columns: n, share of the data, % per class (they sum to 100) and `% ambiguous`
+    (papers that had more than one technique category before the priority rule)."""
     total = max(sum(len(v) for v in splits.values()), 1)
     rows = []
     for name, d in splits.items():
-        multi = lm.to_multihot(d["technique_labels"], lm.TECHNIQUE_CLASSES)
+        n = max(len(d), 1)
         row = {"split": name, "n": len(d), "% of data": round(100 * len(d) / total, 1)}
-        row.update((multi.astype(float).mean() * 100).round(1).to_dict())
+        for c in lm.TECHNIQUE_CLASSES:
+            row[c] = round(100 * (d["technique_label"] == c).sum() / n, 1)
+        row["% ambiguous"] = round(100 * d["technique_labels"].str.contains("|", regex=False).sum() / n, 1)
         rows.append(row)
     return pd.DataFrame(rows).set_index("split")

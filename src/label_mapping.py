@@ -3,12 +3,16 @@
 Two independent label sets are derived from the arXiv `categories` field
 (space-separated codes, primary category first):
 
-1. TECHNIQUE labels  -> target of the CLASSIFICATION task.
+1. TECHNIQUE label  -> target of the CLASSIFICATION task (ONE label per paper).
    Which AI sub-field / modality does the paper belong to?
    (Computer Vision, NLP, Robotics, Speech & Audio, ...).
-   Multi-label: a vision-language paper carries both Computer Vision and NLP.
-   If a paper only has the generic catch-all categories (cs.AI, cs.LG, stat.ML)
-   it gets the single label GENERAL.
+   Priority rule (`technique_label`):
+     a) if the PRIMARY category is a specific technique, that is the label;
+     b) otherwise the first specific technique among the other categories, in the
+        order listed by arXiv;
+     c) otherwise GENERAL (only generic categories: cs.AI, cs.LG, stat.ML, cs.NE).
+   `technique_labels` keeps ALL the techniques of the paper ('|'-joined, ~7% of the
+   papers have more than one): used to analyse the ambiguous papers, not as target.
 
 2. DOMAIN labels -> NOT a classification target.
    Which field is AI applied to (physics, life sciences, economics, ...)?
@@ -39,10 +43,10 @@ TECHNIQUE_MAP = {
     "eess.AS": "Speech & Audio",
     "cs.IR": "Information Retrieval & RecSys",
     "cs.MA": "Multi-Agent Systems",
-    "cs.NE": "Neural & Evolutionary Computing",
 }
-# generic catch-all categories: carry no technique information
-GENERIC_AI = {"cs.AI", "cs.LG", "stat.ML"}
+# generic catch-all categories: carry no technique information.
+# cs.NE is here because its meaning drifted (deep learning in 2015, evolutionary computing today).
+GENERIC_AI = {"cs.AI", "cs.LG", "stat.ML", "cs.NE"}
 TECHNIQUE_CLASSES = [GENERAL] + sorted(set(TECHNIQUE_MAP.values()))
 
 # ------------------------------------------------------------------- domain
@@ -111,6 +115,18 @@ def technique_labels(categories: str) -> list[str]:
     return labs or [GENERAL]
 
 
+def technique_label(categories: str, primary: str | None = None) -> str:
+    """Single technique label with the priority rule (primary first, then listed order)."""
+    cats = categories.split()
+    primary = primary or (cats[0] if cats else None)
+    if primary in TECHNIQUE_MAP:
+        return TECHNIQUE_MAP[primary]
+    for c in cats:
+        if c in TECHNIQUE_MAP:
+            return TECHNIQUE_MAP[c]
+    return GENERAL
+
+
 def domain_labels(categories: str) -> list[str]:
     cats = categories.split()
     labs = sorted({d for d in (domain_of(c) for c in cats) if d})
@@ -118,8 +134,11 @@ def domain_labels(categories: str) -> list[str]:
 
 
 def add_labels(df: pd.DataFrame, sep: str = "|") -> pd.DataFrame:
-    """Add `technique_labels` and `domain_labels` (joined by `sep`) to a copy of df."""
+    """Add `technique_label` (single, target), `technique_labels` (all, joined by `sep`) and
+    `domain_labels` to a copy of df. Uses `primary_category` if the column is present."""
     out = df.copy()
+    prim = out["primary_category"] if "primary_category" in out else [None] * len(out)
+    out["technique_label"] = [technique_label(c, p) for c, p in zip(out["categories"], prim)]
     out["technique_labels"] = out["categories"].map(lambda s: sep.join(technique_labels(s)))
     out["domain_labels"] = out["categories"].map(lambda s: sep.join(domain_labels(s)))
     return out
@@ -142,7 +161,12 @@ def check_coverage() -> None:
 def label_report(df: pd.DataFrame) -> str:
     lines = []
     n = len(df)
-    for col, title in (("technique_labels", "TECHNIQUE"), ("domain_labels", "DOMAIN")):
+    cols = [("technique_label", "TECHNIQUE label (single, classification target)"),
+            ("technique_labels", "TECHNIQUE labels (all, for analysis)"),
+            ("domain_labels", "DOMAIN labels (reference for topic modeling)")]
+    for col, title in cols:
+        if col not in df:
+            continue
         sets = df[col].str.split("|", regex=False)
         cnt = Counter(l for s in sets for l in s)
         card = sets.map(len)

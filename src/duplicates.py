@@ -4,8 +4,10 @@ Workflow (run on the full table, BEFORE the train/validation/test split):
 
 1. Exact duplicate abstracts  -> `report_exact_abstract_duplicates` writes a CSV to look at,
    `drop_exact_abstract_duplicates` removes them (keeps the earliest paper of each group).
-2. Same title                 -> `build_title_review` writes a CSV to review by hand
-   (columns `status` and `drop`), `apply_title_decisions` removes the rows marked `drop = 1`.
+2. Same title                 -> `build_title_review` writes a CSV to review by hand;
+   the decisions are applied with `apply_title_rules` (explicit lists of titles to keep in full
+   or to keep only the latest copy; default: earliest copy) or, alternatively, with
+   `apply_title_decisions` (rows marked `drop = 1` in the CSV).
 
 Nothing is decided silently: every function returns statistics and the review files list
 every row involved. Both steps only use text equality / similarity, never the labels.
@@ -131,6 +133,39 @@ def build_title_review(df: pd.DataFrame, out_csv: str | Path) -> pd.DataFrame:
     print(f"title duplicates: {dup['group_id'].nunique()} groups, {len(dup)} rows | groups by status: {per_status}")
     print("saved ->", out_csv, "  (fill the `drop` column with 1, then call apply_title_decisions)")
     return dup[cols]
+
+
+def _norm_title(t: str) -> str:
+    return " ".join(str(t).lower().split())
+
+
+def apply_title_rules(df: pd.DataFrame, keep_all=(), keep_latest=()):
+    """Resolve groups of papers that share the same title, with explicit rules.
+
+    * titles in `keep_all`   : different papers with the same title -> every copy is kept;
+    * titles in `keep_latest`: keep only the most recent copy (the more complete one);
+    * every other duplicated title: keep only the earliest copy.
+
+    Titles are compared ignoring case and repeated spaces. Returns
+    (clean_df, dropped_df, not_found) where `not_found` lists the given titles that match
+    no duplicated title (typos, or already resolved by the exact-abstract step).
+    """
+    key = df["title"].str.strip()
+    dup = _order(df[key.duplicated(keep=False)].copy())
+    dup["_key"] = key[dup.index]
+    all_n = {_norm_title(t) for t in keep_all}
+    latest_n = {_norm_title(t) for t in keep_latest}
+    present = {_norm_title(k) for k in dup["_key"]}
+    not_found = [t for t in list(keep_all) + list(keep_latest) if _norm_title(t) not in present]
+    drop_idx = []
+    for k, g in dup.groupby("_key", sort=False):
+        nk = _norm_title(k)
+        if nk in all_n:
+            continue
+        keep_idx = g.index[-1] if nk in latest_n else g.index[0]
+        drop_idx += [i for i in g.index if i != keep_idx]
+    dropped = df.loc[drop_idx, REVIEW_COLS]
+    return df.drop(index=drop_idx), dropped, not_found
 
 
 def apply_title_decisions(df: pd.DataFrame, review_csv: str | Path):
