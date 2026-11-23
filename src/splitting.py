@@ -3,13 +3,14 @@
 * `split_by_year`: train = years <= TRAIN_END, validation = VAL_YEAR, test = TEST_YEAR.
   The cut is on whole calendar years, so no paper of the test period can appear in training
   and seasonality (conference deadlines) does not distort a split made in the middle of a year.
-* `cap_general`: rebalancing that touches the TRAIN set only. It reduces the papers whose
-  technique label is `General ML/AI`, sampling them uniformly within each month so that
-  the temporal composition of the training set is preserved. Validation and test keep their
+* `cap_classes`: rebalancing that touches the TRAIN set only. Every technique class is reduced to
+  at most `cap` papers, taken uniformly over the months so that the temporal composition of each
+  class is preserved. Classes smaller than the cap are kept whole. Validation and test keep their
   natural distribution, otherwise the metrics would describe a world that does not exist.
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 import label_mapping as lm
@@ -33,24 +34,24 @@ def split_by_year(df: pd.DataFrame, train_end: int = 2024, val_year: int = 2025,
     return out
 
 
-def general_only_mask(df: pd.DataFrame) -> pd.Series:
-    """Papers whose (single) technique label is `General ML/AI`."""
-    return df["technique_label"] == lm.GENERAL
+def cap_classes(train: pd.DataFrame, cap: int, seed: int = 42, label_col: str = "technique_label") -> pd.DataFrame:
+    """Keep at most `cap` papers per class, spread evenly over the months (exactly `cap` for big classes).
 
-
-def cap_general(train: pd.DataFrame, cap: int, seed: int = 42) -> pd.DataFrame:
-    """Keep at most ~`cap` papers whose only label is General ML/AI, uniformly within each month.
-
-    All other papers are kept. The result is approximately `cap` (each month is rounded).
+    Within a class the papers are ordered by month (random order inside the month) and `cap` of
+    them are taken at evenly spaced positions, so every month keeps its proportional share.
     """
-    mask = general_only_mask(train)
-    gen, rest = train[mask], train[~mask]
-    if cap >= len(gen):
+    if train.empty:
         return train.copy()
-    month = gen["published"].str[:7]
-    frac = cap / len(gen)
-    kept = gen.groupby(month, group_keys=False).sample(frac=frac, random_state=seed)
-    return pd.concat([rest, kept]).sort_values(["published", "arxiv_id"], kind="mergesort")
+    rng = np.random.default_rng(seed)
+    parts = []
+    for _, g in train.groupby(label_col, sort=False):
+        if len(g) <= cap:
+            parts.append(g)
+            continue
+        g = g.assign(_month=g["published"].str[:7], _r=rng.random(len(g))).sort_values(["_month", "_r"])
+        idx = np.round(np.linspace(0, len(g) - 1, cap)).astype(int)
+        parts.append(g.iloc[idx].drop(columns=["_month", "_r"]))
+    return pd.concat(parts).sort_values(["published", "arxiv_id"], kind="mergesort")
 
 
 def split_summary(splits: dict[str, pd.DataFrame]) -> pd.DataFrame:
