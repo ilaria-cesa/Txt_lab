@@ -7,3 +7,11 @@ data/*
 !data/.gitkeep
 *_cache/
 arxiv_cache/
+
+# course material (not ours, the repository is public)
+*.zip
+LAB*/
+lab_materials/
+course_material/
+# system leftovers
+~BROMIUM/
