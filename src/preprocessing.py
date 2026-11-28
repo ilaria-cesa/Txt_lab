@@ -149,6 +149,48 @@ def lemma_tokens(texts, nlp, stopwords=frozenset(), drop_numbers: bool = True, m
     return out
 
 
+def lemma_tokens_chunked(texts, nlp, cache_dir, chunk_size: int = 5000, max_chars: int = 10000,
+                         stopwords=frozenset(), drop_numbers: bool = True, min_len: int = 2,
+                         n_process: int = 1, batch_size: int = 256) -> list[list[str]]:
+    """Same output as `lemma_tokens`, but processed in blocks that are saved one by one in `cache_dir`.
+
+    If the session stops (Colab disconnects, a worker hangs) the finished blocks are not lost: running
+    the cell again resumes from the first missing block. Every block prints its index and time, so a
+    block that hangs is visible. Texts longer than `max_chars` are cut (abstracts are far shorter, so
+    only a pathological record is affected). `n_process=1` is the safe default: in Colab a worker that
+    is killed for lack of memory leaves the pool waiting forever.
+    """
+    import pickle
+    import time
+    from pathlib import Path
+
+    texts = [t[:max_chars] for t in texts]
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    n_chunks = -(-len(texts) // chunk_size)
+    out, t0, done_now = [], time.time(), 0
+    for i in range(n_chunks):
+        f = cache_dir / f"chunk_{i:04d}.pkl"
+        if f.exists():
+            with open(f, "rb") as fh:
+                out += pickle.load(fh)
+            continue
+        block = texts[i * chunk_size:(i + 1) * chunk_size]
+        t1 = time.time()
+        res = lemma_tokens(block, nlp, stopwords, drop_numbers, min_len, n_process, batch_size, progress=False)
+        tmp = f.with_suffix(".tmp")
+        with open(tmp, "wb") as fh:
+            pickle.dump(res, fh)
+        tmp.replace(f)                                  # a half-written block never looks finished
+        out += res
+        done_now += 1
+        left = n_chunks - i - 1
+        mean = (time.time() - t0) / done_now
+        print(f"block {i + 1}/{n_chunks} done in {(time.time() - t1) / 60:.1f} min | "
+              f"about {left * mean / 60:.0f} min left", flush=True)
+    return out
+
+
 # ------------------------------------------------------------------ analysis helpers
 def document_frequency(token_lists, top: int = 100) -> pd.DataFrame:
     """Most frequent tokens by number of documents that contain them (to choose domain stop words)."""
